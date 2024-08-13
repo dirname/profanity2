@@ -1,0 +1,90 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.1.0-runtime-ubuntu22.04
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        apt-get update && apt-get install -y --no-install-recommends \
+          curl wget \
+          ocl-icd-libopencl1 \
+          opencl-headers \
+          nano \
+          build-essential \
+          clinfo pkg-config && \
+        rm -rf /var/lib/apt/lists/*
+        
+        mkdir -p /etc/OpenCL/vendors && \
+          echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
+        
+        ln -s /usr/local/cuda/lib64/libOpenCL.so.1 /usr/lib/libOpenCL.so
+        
+        echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf && \
+          echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf
+        
+        export PATH=/usr/local/nvidia/bin:${PATH}
+        export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+        
+        export NVIDIA_VISIBLE_DEVICES=all
+        export NVIDIA_DRIVER_CAPABILITIES=compute,utility
+        
+    - name: Build
+      run: make all
+
+    - name: Archive production artifacts
+      run: tar -czvf release.tgz profanity2.x64
+      
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-artifact
+        path: release.tgz
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Download build artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifact
+        path: .
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: master
+        release_name: Release master
+        body: |
+          Release notes for master
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./release.tgz
+        asset_name: release.tgz
+        asset_content_type: application/gzip
